@@ -1,7 +1,12 @@
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-export const BASE_URL = "http://192.168.10.220:8000"; // change this once, works everywhere
+// src/config/api.js
+const LOCAL_API = "http://192.168.10.220:8000";
+const PROD_API = "https://project3be.onrender.com";
+
+export const BASE_URL =
+  process.env.EXPO_PUBLIC_ENV === "production" ? PROD_API : LOCAL_API;
 
 export const api = axios.create({
   baseURL: BASE_URL,
