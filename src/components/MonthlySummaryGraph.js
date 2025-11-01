@@ -35,8 +35,10 @@ export default function MonthlySummaryGraph({ monthSummary = {}, activeMonth, on
                             transactionCount: item.transactionCount,
                         }));
                         setMonthlyData(formatted);
+                        // Find the highest expense to scale others relative to it
+                        const maxExpense = Math.max(...formatted.map((item) => item.exp || 0), 1);
                         const animValues = formatted.map(
-                            (item) => new Animated.Value(item.exp / 400)
+                            (item) => new Animated.Value((item.exp / maxExpense) * 120) // 120 is the max bar height in px
                         );
                         setAnimatedHeights(animValues);
                         setCurrency(res.currency === "INR" ? "₹" : res.currency || "");
@@ -83,8 +85,9 @@ export default function MonthlySummaryGraph({ monthSummary = {}, activeMonth, on
     // ✅ Animate bars when data updates
     useEffect(() => {
         animatedHeights.forEach((anim, i) => {
+            const maxExpense = Math.max(...monthlyData.map((item) => item.exp || 0), 1);
             Animated.timing(anim, {
-                toValue: monthlyData[i]?.exp / 400 || 0,
+                toValue: (monthlyData[i]?.exp / maxExpense) * 120 || 0,
                 duration: 600,
                 useNativeDriver: false,
             }).start();
