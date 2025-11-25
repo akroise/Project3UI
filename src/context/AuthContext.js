@@ -28,17 +28,18 @@ export const AuthProvider = ({ children }) => {
                             isLoggedIn: true,
                             user: res.data.user,
                             token: token,
+                            user_id: res.data.user_id
                         });
                     } else {
                         await AsyncStorage.removeItem("session_token");
-                        setAuth({ isLoggedIn: false, user: null, token: null });
+                        setAuth({ isLoggedIn: false, user: null, token: null, user_id: null });
                     }
                 } else {
-                    setAuth({ isLoggedIn: false, user: null, token: null });
+                    setAuth({ isLoggedIn: false, user: null, token: null, user_id: null });
                 }
             } catch (err) {
                 await AsyncStorage.removeItem("session_token");
-                setAuth({ isLoggedIn: false, user: null, token: null });
+                setAuth({ isLoggedIn: false, user: null, token: null, user_id: null });
             } finally {
                 setLoading(false);
             }
@@ -65,6 +66,7 @@ export const AuthProvider = ({ children }) => {
                     isLoggedIn: true,
                     user: res.data.user || username,
                     token: sessionToken || "dummy-token",
+                    user_id: res.data.user_id
                 });
                 // Persist in AsyncStorage
                 await AsyncStorage.setItem("session_token", sessionToken);
