@@ -50,3 +50,47 @@ export const getExpenseFeed = async (page = 1, limit = 10, month = null) => {
     return handleError(err);
   }
 };
+
+
+// -------------------------------------------------------
+// 1️⃣ Delete Expense
+// Backend must update is_active = 0 for this expense
+// -------------------------------------------------------
+export const deleteExpense = async ({ userId, expenseId }) => {
+  try {
+    const res = await api.patch("/expense/delete", {
+      user_id: userId,
+      expense_id: expenseId,
+    });
+
+    return res.data; // expect: { status: "success" }
+  } catch (error) {
+    console.error("❌ deleteExpense error:", error.response?.data || error);
+    return {
+      status: "error",
+      message: error.response?.data?.detail || "Delete failed",
+    };
+  }
+};
+
+// -------------------------------------------------------
+// 2️⃣ Toggle Take Back
+// Backend must store is_take_back = true / false
+// -------------------------------------------------------
+export const toggleTakeBack = async ({ userId, expenseId, takeBack }) => {
+  try {
+    const res = await api.patch("/expense/take-back", {
+      user_id: userId,
+      expense_id: expenseId,
+      take_back: takeBack, // boolean
+    });
+
+    return res.data; // expect: { status: "success" }
+  } catch (error) {
+    console.error("❌ toggleTakeBack error:", error.response?.data || error);
+    return {
+      status: "error",
+      message: error.response?.data?.detail || "Take-back update failed",
+    };
+  }
+};

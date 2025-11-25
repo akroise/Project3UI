@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from "react";
+// src/screens/ReceiptsScreen.js
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   StyleSheet,
   SectionList,
   ActivityIndicator,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useIsFocused } from "@react-navigation/native";
@@ -14,15 +16,26 @@ import {
   Card,
   Avatar,
   useTheme,
-  Portal
+  Portal,
+  Dialog,
+  Paragraph,
+  IconButton,
 } from "react-native-paper";
 import MonthlySummaryGraph from "../components/MonthlySummaryGraph";
 import { format } from "date-fns";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { getExpenseSummary, getExpenseFeed } from "../api/expenseApi";
+import Toast from "react-native-toast-message";
+import {
+  getExpenseSummary,
+  getExpenseFeed,
+  deleteExpense,
+  toggleTakeBack,
+} from "../api/expenseApi"; // make sure deleteExpense & toggleTakeBack exist
+import { useAuth } from "../context/AuthContext";
 
 export default function ReceiptsScreen() {
   const theme = useTheme();
+  const { auth, authloading, error, login, logout } = useAuth();
 
   // 🧩 Filters
   const filters = [
@@ -48,12 +61,18 @@ export default function ReceiptsScreen() {
     new Date().toLocaleString("en-US", { month: "short" }) // e.g., "Oct"
   );
 
+  // -------------------------
+  // API calls
+  // -------------------------
   // ✅ Fetch summary (independent of list)
   const fetchSummary = async () => {
     try {
       const res = await getExpenseSummary(selectedFilter.value);
       if (res.status === "success") {
-        setSummary(res.data.totalExpense);
+        setSummary(res.data.totalExpense || 0);
+      } else {
+        // handle non-success shape
+        Toast.show({ type: "error", text1: res.message || "Failed to fetch summary" });
       }
     } catch (err) {
       const message =
@@ -68,9 +87,9 @@ export default function ReceiptsScreen() {
   const fetchExpenses = async (pageNo = 1, month = activeMonth) => {
     setLoading(true);
     try {
-      const res = await getExpenseFeed(pageNo, 10, month); // <-- added month param
+      const res = await getExpenseFeed(pageNo, 10, month);
       if (res.status === "success") {
-        const { expenses, currency } = res.data;
+        const { expenses } = res.data;
 
         // Group by date for section list
         const grouped = expenses.reduce((acc, e) => {
@@ -104,6 +123,7 @@ export default function ReceiptsScreen() {
   useEffect(() => {
     fetchSummary(); // refresh total based on filter
     fetchExpenses(1, activeMonth); // refresh list for selected month
+    setPage(1);
   }, [activeMonth, selectedFilter]);
 
   // 🔹 Refresh data when returning to this screen (after adding expense)
@@ -111,6 +131,7 @@ export default function ReceiptsScreen() {
     if (isFocused) {
       fetchSummary();
       fetchExpenses(1, activeMonth);
+      setPage(1);
     }
   }, [isFocused]);
 
@@ -141,33 +162,241 @@ export default function ReceiptsScreen() {
     }
   };
 
-  const renderExpense = ({ item }) => {
-    const dateTime = format(new Date(item.dateTime), "dd MMM • hh:mm a");
-    return (
-      <Card style={styles.card} mode="contained">
-        <View style={styles.row}>
-          <Avatar.Icon
-            size={42}
-            icon={() => (
-              <MaterialCommunityIcons
-                name={getIcon(item.expenseType)}
-                size={26}
-                color={theme.colors.primary}
-              />
-            )}
-            style={[styles.avatar, { backgroundColor: theme.colors.primary + "22" }]}
-          />
+  // -------------------------
+  // Item-level component with animation + menu actions
+  // -------------------------
+  function ExpenseItem({ item, onDeleted, onTakeBackToggled }) {
+    const [menuVisibleLocal, setMenuVisibleLocal] = useState(false);
+    const [confirmVisible, setConfirmVisible] = useState(false);
+    const [loadingAction, setLoadingAction] = useState(false);
+    const anim = useRef(new Animated.Value(1)).current; // local animated value
 
-          <View style={styles.details}>
-            <Text style={styles.title}>{item.expenseType}</Text>
-            <Text style={styles.desc}>{item.description}</Text>
-            <Text style={styles.time}>{dateTime}</Text>
+    const openMenu = () => setMenuVisibleLocal(true);
+    const closeMenu = () => setMenuVisibleLocal(false);
+
+    const confirmDelete = () => {
+      setConfirmVisible(true);
+      closeMenu();
+    };
+    const cancelDelete = () => setConfirmVisible(false);
+
+    // delete with shrink animation -> backend -> remove from UI
+    const handleDelete = async () => {
+      setLoadingAction(true);
+      // shrink first
+      Animated.timing(anim, {
+        toValue: 0,
+        duration: 280,
+        useNativeDriver: false,
+      }).start(async () => {
+        try {
+          const userId = auth.user_id || auth.user_id || null;
+          const res = await deleteExpense({ userId, expenseId: item.id });
+          const ok = res?.status === "success" || res?.success === true;
+          if (ok) {
+            onDeleted(item);
+            Toast.show({ type: "success", text1: "Expense deleted" });
+          } else {
+            // animate back in on failure
+            Animated.timing(anim, {
+              toValue: 1,
+              duration: 180,
+              useNativeDriver: false,
+            }).start(); 
+            Toast.show({ type: "error", text1: res?.message || "Delete failed" });
+          }
+        } catch (err) {
+          console.error("Delete expense error:", err);
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 180,
+            useNativeDriver: false,
+          }).start();
+          Toast.show({ type: "error", text1: "Failed to delete expense" });
+        } finally {
+          setLoadingAction(false);
+          setConfirmVisible(false);
+          closeMenu();
+        }
+      });
+    };
+
+    const handleToggleTakeBack = async () => {
+      setLoadingAction(true);
+      try {
+        const userId = auth.user_id || auth.user_id || null;
+        const newVal = !item.is_take_back;
+        const res = await toggleTakeBack({
+          userId,
+          expenseId: item.id,
+          takeBack: newVal,
+        });
+        const ok = res?.status === "success" || res?.success === true;
+        if (ok) {
+          onTakeBackToggled(item, newVal);
+          Toast.show({
+            type: "success",
+            text1: newVal ? "Take-back enabled" : "Take-back disabled",
+          });
+        } else {
+          Toast.show({ type: "error", text1: res?.message || "Operation failed" });
+        }
+      } catch (err) {
+        console.error("Toggle takeback error:", err);
+        Toast.show({ type: "error", text1: "Unable to update take-back" });
+      } finally {
+        setLoadingAction(false);
+        closeMenu();
+      }
+    };
+
+    const animatedStyle = {
+      opacity: anim,
+      transform: [
+        {
+          scale: anim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.92, 1],
+          }),
+        },
+      ],
+    };
+
+    return (
+      <Animated.View style={[animatedStyle]}>
+        <Card style={styles.card} mode="contained">
+          <View style={styles.row}>
+            <Avatar.Icon
+              size={42}
+              icon={() => (
+                <MaterialCommunityIcons
+                  name={getIcon(item.expenseType)}
+                  size={26}
+                  color={theme.colors.primary}
+                />
+              )}
+              style={[styles.avatar, { backgroundColor: theme.colors.primary + "22" }]}
+            />
+
+            <View style={styles.details}>
+              <Text style={styles.title}>{item.expenseType}</Text>
+              <Text style={styles.desc}>{item.description}</Text>
+              <Text style={styles.time}>
+                {format(new Date(item.dateTime), "dd MMM • hh:mm a")}
+              </Text>
+
+              {item.is_take_back ? (
+                <Text style={{ color: theme.colors.primary, marginTop: 6, fontSize: 13 }}>
+                  Take back enabled
+                </Text>
+              ) : null}
+            </View>
+
+            <View style={{ alignItems: "flex-end", justifyContent: "center" }}>
+              <Text style={styles.amount}>₹{item.amount?.toLocaleString()}</Text>
+
+              <Menu
+                visible={menuVisibleLocal}
+                onDismiss={closeMenu}
+                anchor={
+                  // <IconButton
+                  //   icon="dots-vertical"
+                  //   onPress={openMenu}
+                  //   size={20}
+                  //   style={{ marginLeft: 6 }}
+                  // />
+                  <Button mode="text" onPress={openMenu} compact> ⋯ </Button>
+                }
+              >
+                <Menu.Item
+                  onPress={confirmDelete}
+                  title="Delete"
+                  leadingIcon={() => (
+                    <MaterialCommunityIcons name="delete-outline" size={20} color="#b00020" />
+                  )}
+                />
+
+                <Menu.Item
+                  onPress={handleToggleTakeBack}
+                  title={item.is_take_back ? "Undo Take Back" : "Take Back"}
+                  leadingIcon={() => (
+                    <MaterialCommunityIcons
+                      name={item.is_take_back ? "backup-restore" : "hand-coin-outline"}
+                      size={20}
+                      color={theme.colors.primary}
+                    />
+                  )}
+                />
+
+                {item.is_take_back && (
+                  <>
+                    <Menu.Item
+                      title={`Amount taken: ₹${item.amount?.toLocaleString()}`}
+                      leadingIcon={() => (
+                        <MaterialCommunityIcons name="cash-multiple" size={18} color="#777" />
+                      )}
+                    />
+
+                    <Menu.Item
+                      onPress={() => {
+                        Toast.show({ type: "info", text1: "Feature: mark amount taken" });
+                        closeMenu();
+                      }}
+                      title="Mark Amount Taken"
+                      leadingIcon={() => (
+                        <MaterialCommunityIcons
+                          name="checkbox-marked-circle-outline"
+                          size={18}
+                          color="#2B8761"
+                        />
+                      )}
+                    />
+                  </>
+                )}
+              </Menu>
+            </View>
           </View>
-          <Text style={styles.amount}>₹{item.amount.toLocaleString()}</Text>
-        </View>
-      </Card>
+
+          {/* Confirm delete dialog (local to this item) */}
+          <Portal>
+            <Dialog visible={confirmVisible} onDismiss={cancelDelete}>
+              <Dialog.Title>Confirm Delete</Dialog.Title>
+              <Dialog.Content>
+                <Paragraph>Are you sure you want to delete this expense?</Paragraph>
+              </Dialog.Content>
+              <Dialog.Actions>
+                <Button onPress={cancelDelete}>Back</Button>
+                <Button onPress={handleDelete} loading={loadingAction}>
+                  Confirm
+                </Button>
+              </Dialog.Actions>
+            </Dialog>
+          </Portal>
+        </Card>
+      </Animated.View>
     );
-  };
+  }
+
+  // callbacks to update sections when items change
+  const onExpenseDeleted = useCallback((deletedItem) => {
+    setSections((prev) =>
+      prev
+        .map((section) => ({
+          ...section,
+          data: section.data.filter((d) => d.id !== deletedItem.id),
+        }))
+        .filter((s) => s.data.length > 0)
+    );
+  }, []);
+
+  const onExpenseTakeBackToggled = useCallback((toggledItem, val) => {
+    setSections((prev) =>
+      prev.map((section) => ({
+        ...section,
+        data: section.data.map((d) => (d.id === toggledItem.id ? { ...d, is_take_back: val } : d)),
+      }))
+    );
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -175,7 +404,7 @@ export default function ReceiptsScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.totalLabel}>Total Expense</Text>
-          <Text style={styles.totalValue}>₹{summary.toLocaleString()}</Text>
+          <Text style={styles.totalValue}>₹{(summary || 0).toLocaleString()}</Text>
         </View>
 
         {/* Filter Menu */}
@@ -198,12 +427,13 @@ export default function ReceiptsScreen() {
               key={f.value}
               onPress={() => {
                 setVisible(false);
+                // small delay prevents stuck menu issues on some devices
                 setTimeout(() => {
                   setSelectedFilter(f);
                   setPage(1);
-                  fetchSummary(); // ✅ re-fetch header total
+                  fetchSummary(); // re-fetch header total
                   fetchExpenses(1, activeMonth);
-                }, 150); // small delay prevents stuck menu
+                }, 150);
               }}
               title={f.label}
             />
@@ -218,7 +448,7 @@ export default function ReceiptsScreen() {
         onMonthSelect={(newMonth) => {
           setActiveMonth(newMonth);
           setPage(1);
-          fetchExpenses(1, newMonth); // 🔹 Re-fetch expenses for the selected month
+          fetchExpenses(1, newMonth); // Re-fetch expenses for the selected month
         }}
       />
 
@@ -230,17 +460,21 @@ export default function ReceiptsScreen() {
           setRefreshing(true);
           fetchExpenses(1, activeMonth);
         }}
-        renderItem={renderExpense}
+        renderItem={({ item }) => (
+          <ExpenseItem
+            item={item}
+            onDeleted={onExpenseDeleted}
+            onTakeBackToggled={onExpenseTakeBackToggled}
+          />
+        )}
         renderSectionHeader={({ section: { title } }) => (
           <Text style={styles.sectionHeader}>{title}</Text>
         )}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 100 }}
         onEndReached={loadMore}
         onEndReachedThreshold={0.3}
-        ListFooterComponent={
-          loading ? <ActivityIndicator style={{ marginVertical: 20 }} /> : null
-        }
+        ListFooterComponent={loading ? <ActivityIndicator style={{ marginVertical: 20 }} /> : null}
         showsVerticalScrollIndicator={false}
       />
     </SafeAreaView>
@@ -315,4 +549,3 @@ const styles = StyleSheet.create({
     color: "#000",
   },
 });
-

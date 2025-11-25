@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 import * as Sharing from "expo-sharing";
 
 // src/config/api.js
-const LOCAL_API = "http://127.0.0.1:8000:8000";
+const LOCAL_API = "http://127.0.0.1:8000";
 const PROD_API = "https://project3be.onrender.com";
 
 export const BASE_URL =
@@ -40,22 +40,74 @@ api.interceptors.response.use(
 );
 
 // ✅ Download DB function
+// export const downloadDatabase = async (token) => {
+//   try {
+//     const url = `${BASE_URL}/download-db`;
+
+//     // ✅ Handle Web platform separately
+//     if (Platform.OS === "web") {
+//       const response = await axios.get(url, {
+//         headers: { Authorization: `Bearer ${token}` },
+//         responseType: "blob",
+//       });
+
+//       // Create a download link
+//       const blobUrl = window.URL.createObjectURL(response.data);
+//       const link = document.createElement("a");
+//       link.href = blobUrl;
+//       link.download = "expense_tracker.db";
+//       document.body.appendChild(link);
+//       link.click();
+//       document.body.removeChild(link);
+
+//       return { success: true, fileUri: blobUrl };
+//     }
+
+//     // ✅ For Android/iOS (Expo Go)
+//     const fileUri = FileSystem.documentDirectory + "expense_tracker.db";
+//     const result = await FileSystem.downloadAsync(url, fileUri, {
+//       headers: { Authorization: `Bearer ${token}` },
+//     });
+
+//     // Optional sharing
+//     if (await Sharing.isAvailableAsync()) {
+//       await Sharing.shareAsync(result.uri);
+//     }
+
+//     return { success: true, fileUri: result.uri };
+//   } catch (error) {
+//     console.error("❌ Download DB error:", error);
+//     throw error;
+//   }
+// };
+
+// ✅ Download DB function (with datetime filename)
 export const downloadDatabase = async (token) => {
   try {
     const url = `${BASE_URL}/download-db`;
 
-    // ✅ Handle Web platform separately
+    // Generate filename with timestamp
+    const now = new Date();
+    const timestamp = now
+      .toISOString()
+      .replace(/[:]/g, "-")
+      .replace(/\..+/, ""); // remove milliseconds
+    const fileName = `expense_tracker_${timestamp}.db`;
+
+    // -------------------------------------------------
+    // 🌐 WEB DOWNLOAD
+    // -------------------------------------------------
     if (Platform.OS === "web") {
       const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         responseType: "blob",
       });
 
-      // Create a download link
       const blobUrl = window.URL.createObjectURL(response.data);
+
       const link = document.createElement("a");
       link.href = blobUrl;
-      link.download = "expense_tracker.db";
+      link.download = fileName; // ⬅️ timestamped name
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -63,13 +115,16 @@ export const downloadDatabase = async (token) => {
       return { success: true, fileUri: blobUrl };
     }
 
-    // ✅ For Android/iOS (Expo Go)
-    const fileUri = FileSystem.documentDirectory + "expense_tracker.db";
+    // -------------------------------------------------
+    // 📱 ANDROID / iOS (Expo Go)
+    // -------------------------------------------------
+    const fileUri = FileSystem.documentDirectory + fileName;
+
     const result = await FileSystem.downloadAsync(url, fileUri, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    // Optional sharing
+    // Share if available
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(result.uri);
     }
@@ -80,3 +135,4 @@ export const downloadDatabase = async (token) => {
     throw error;
   }
 };
+
